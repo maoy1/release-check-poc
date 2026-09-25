@@ -65,7 +65,7 @@ JIRA_BASE = os.environ["JIRA_BASE"].rstrip("/")      # e.g. https://yourcompany.
 SLACK_USER_TOKEN = os.environ.get("SLACK_USER_TOKEN")
 SUPPORT_CHANNEL = os.environ.get("SUPPORT_CHANNEL")
 
-TICKET_REGEX = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b")
+TICKET_REGEX = re.compile(r"\b([A-Za-z][A-Za-z0-9]+)[-\s](\d{2,})\b")
 AUTOMATED_COMMIT_REGEX = re.compile(r"^Bump version:.*\[ci skip\]$", re.IGNORECASE)
 
 
@@ -105,11 +105,24 @@ def get_diff_prs(base_ref: str, head_ref: str):
 
 def extract_ticket_from_title(title: str):
     """Pull a Jira ticket key (e.g. AIPL-1234) out of a PR/commit title.
-    Returns None if no ticket key is found -> caller should flag for
-    manual review. Note: does not match lowercase keys (e.g. aipl-1234)
-    - open edge case, not currently handled."""
+    Returns the normalized "PROJECT-1234" form, or None if no ticket key
+    is found -> caller should flag for manual review.
+
+    Handles:
+      - Standard hyphenated form: "AIPL-1234", "[AIPL-1234]", "(AIPL-1234)"
+      - Lowercase: "aipl-1234" -> normalized to "AIPL-1234"
+      - Space-separated, no hyphen: "Rtsc 62316" -> normalized to "RTSC-62316"
+
+    Ticket-like words that are actually plain English (e.g. "A 5") are
+    avoided by requiring the letter prefix to be at least 2 characters
+    and the number to be at least 2 digits."""
     match = TICKET_REGEX.search(title or "")
-    return match.group(1) if match else None
+    if not match:
+        return None
+    project, number = match.groups()
+    if len(project) < 2:
+        return None
+    return f"{project.upper()}-{number}"
 
 
 def get_jira_status(ticket: str):
