@@ -1,6 +1,5 @@
 # Release Automation Proposal
 
-> This canvas was generated using AI, which can produce inaccurate or harmful responses. Review for accuracy and safety before using.
 
 ## `scripts/release_check_poc.py` — current script
 
@@ -68,7 +67,7 @@ _This report is informational only — no automated pass/fail verdict is produce
 *Step 2 — PRs to check against <#C0A2N9D1G3B>:*
    • #1793  [AIPL-1234: In Progress]  (Fix client export timeout)
    • #1801  [RSAI-2804: Done]  (Add retry logic for RSAI feed)
-   • 9fceab2  [no Jira ticket]  (Hotfix logging typo)
+   • #1804  [no Jira ticket]  (Hotfix logging typo)
 ```
 
 ## Summary
@@ -131,15 +130,15 @@ All status and result messages remain in the release thread so that the process 
 
 ## POC Scope (Building Now)
 
-Trigger: manual, private only — a DM to the bot or an equivalent private query. No public channel post, no workflow trigger tied to release kickoff messages yet.
-What it does, on demand, for the latest staging-vs-prod diff (implemented today as `scripts/release_check_poc.py`, see above):
+Trigger (target): manual, private only — a DM to the bot or an equivalent private query. No public channel post, no workflow trigger tied to release kickoff messages yet.
+Today, the diff/Jira/hand-off logic exists as a standalone CLI tool (`scripts/release_check_poc.py`, see above) that takes two explicit refs and prints the report to stdout — the DM trigger and DM delivery below are the not-yet-built wiring on top of it. What it does, for a given old-version → new-version diff:
 
-1. Diff current latest version (staging) against production using the existing GitHub compare logic.
+1. Diff `old_version` against `new_version` using the existing GitHub compare logic. (Today: two explicit ref names passed as CLI args — the script does not auto-resolve "current staging" or "production"; that resolution would be added when it's wired to a real trigger.)
 2. For each commit/PR in that diff, check the PR title for a Jira ticket number — this is the required convention for all PRs.
-    1. No ticket number found in the title → flag as needing manual review and notify the requester directly; do not attempt to guess or classify the PR further.
+    1. No ticket number found in the title → flag as needing manual review; do not attempt to guess or classify the PR further. (Today: flagged in the printed report; direct notification to the requester is part of the not-yet-built DM wiring.)
     2. Ticket number found → look up and show its Jira status as information only. Ticket status is not used to block anything in this POC, since ticket status has never been part of the team's actual release-gating process.
 3. The script does not call Slack itself — it has no Slack token or `search:read` scope. Instead it outputs a labeled "Step 2" hand-off list of PR links, matched by URL (not by person), for a human — or an assistant/orchestrator with its own Slack access — to check against the support channel afterward.
-4. Reply privately (DM) with the full list: every PR in the diff, its Jira ticket + status if present, a manual-review flag if no ticket number was found, plus the Step 2 hand-off list of PR links to check against the support channel.
+4. (Target) Reply privately (DM) with the full list: every PR in the diff, its Jira ticket + status if present, a manual-review flag if no ticket number was found, plus the Step 2 hand-off list of PR links to check against the support channel. Today this list is printed to stdout rather than sent as a Slack DM.
 
 What this POC deliberately does not do:
 
@@ -147,7 +146,7 @@ What this POC deliberately does not do:
 * No structured "ready to release" / "hold" signal capture.
 * No public message anywhere — DM only.
 * No blocking verdict — it assembles evidence; the requester still decides.
-* No release-version state tracking between calls; each call is a fresh on-demand lookup against the current latest version.
+* No release-version state tracking between calls; each call is a fresh on-demand lookup for whatever two refs are given.
 * No Slack API calls of any kind — support-channel matching is handed off as a separate step (see script docs above).
 
 This POC is a stepping stone toward the full Client PR Readiness Gate below, which remains the next planned build.
