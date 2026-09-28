@@ -1,12 +1,82 @@
-Release Automation Proposal
-This canvas was generated using AI, which can produce inaccurate or harmful responses. Review for accuracy and safety before using.
+# Release Automation Proposal
 
-Summary
+> This canvas was generated using AI, which can produce inaccurate or harmful responses. Review for accuracy and safety before using.
+
+## `scripts/release_check_poc.py` — current script
+
+This is the working POC script referenced throughout the proposal below (see "POC Scope" and "Architecture"). It produces the readiness report only — it never blocks, gates, or auto-approves a release.
+
+### Setup
+
+```
+pip install -r requirements.txt
+cp .env_template .env   # then fill in your credentials
+```
+
+Environment variables are loaded automatically from `.env` (via `python-dotenv`) when the script runs — no need to `export` them in your shell.
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `GITHUB_TOKEN` | yes | GitHub PAT (classic: `repo`; fine-grained: Contents + Pull requests read) |
+| `GITHUB_REPO` | yes | `owner/repo`, no URL |
+| `JIRA_EMAIL` | yes | Jira account email, used for Basic Auth |
+| `JIRA_TOKEN` | yes | Jira API token, used as the Basic Auth password |
+| `JIRA_BASE` | yes | e.g. `https://elsevier.atlassian.net` |
+| `SUPPORT_CHANNEL` | no | Slack channel ID, e.g. `C0A2N9D1G3B` — informational label only, no Slack call is made |
+
+### Usage
+
+```
+python scripts/release_check_poc.py <old_version> <new_version>
+```
+
+- `old_version` — the version currently in prod / last shipped (base ref)
+- `new_version` — the release candidate being considered (head ref)
+
+```
+# Current prod is 5.0.9-beta, checking main as the new candidate
+python scripts/release_check_poc.py 5.0.9-beta main
+```
+
+### What it does
+
+1. Diffs `old_version` → `new_version` via the GitHub compare API, one entry per PR (commits are resolved to their merged PR and de-duplicated; automated `Bump version: ... [ci skip]` commits are dropped).
+2. Extracts a Jira ticket key from each PR/commit title (e.g. `AIPL-1234`, `[RSAI-2804]`, `Rtsc 62316` → `RTSC-62316`). No match → flagged `manual review needed`.
+3. Looks up each ticket's current Jira status — shown as **info only**, never used to gate the release.
+4. Sorts the PR list: **AIPL** tickets first, then **RSAI**, then PRs with no ticket, then everything else; within each group, PRs with a resolved Jira status sort before failed lookups, then alphabetically by status name.
+5. Prints a plain-text/Slack-formatted report, ending with a "Step 2" hand-off list of PR links — for a human (or an assistant with its own Slack access) to check against the support channel. This script makes no Slack API calls itself.
+
+### Example output
+
+```
+*Client PR Readiness Check* — `5.0.9-beta` → `main`
+
+• *Fix client export timeout (#1793)*
+   Link: <https://github.com/org/repo/pull/1793>
+   Jira: AIPL-1234 — status: *In Progress* (info only, not a gate)
+
+• *Add retry logic for RSAI feed (#1801)*
+   Link: <https://github.com/org/repo/pull/1801>
+   Jira: RSAI-2804 — status: *Done* (info only, not a gate)
+
+• *Hotfix logging typo*
+   Link: <https://github.com/org/repo/commit/9fceab2d8...>
+   :warning: No Jira ticket found in title — *manual review needed*
+
+_This report is informational only — no automated pass/fail verdict is produced._
+
+*Step 2 — PRs to check against <#C0A2N9D1G3B>:*
+   • #1793  [AIPL-1234: In Progress]  (Fix client export timeout)
+   • #1801  [RSAI-2804: Done]  (Add retry logic for RSAI feed)
+   • 9fceab2  [no Jira ticket]  (Hotfix logging typo)
+```
+
+## Summary
 
 We release once or twice a week, and each release requires a release owner to collect information, coordinate confirmations, start or monitor jobs, check the deployed service, and post status updates. Most of this work is repetitive coordination and watching rather than engineering judgment.
 We propose a Slack-based release workflow that keeps the existing release thread and human approval model, while automating the information gathering, status updates, health checks, and final summary. The first version should be a small pilot that runs alongside real releases and can be expanded after we understand the operational edge cases.
 
-Problem
+## Problem
 
 The current release process repeatedly requires someone to:
 
@@ -25,9 +95,9 @@ We have also had cases where regression failed but the team still needed to ship
 A separate but related pain point: it is not always clear which version can safely be released, because a version can contain a client PR that has not been confirmed release-ready by that client team. Client PRs are typically raised as tickets in the support channel, and someone has to manually find the PR, find which client it belongs to, and ask whether it is safe to release — complicated further by the fact that a person's Slack identity and their GitHub identity are not reliably the same, making automatic matching by person unreliable. This needs its own handling in addition to the Jira/regression readiness checks.
 A generated readiness report could make the staging vs. production difference and other known signals visible before release approval. The automation would reduce coordination toil; it would not by itself guarantee that an untested change cannot enter a release.
 
-Goals and non-goals
+## Goals and non-goals
 
-Goals
+### Goals
 
 * Reduce manual information gathering and release-status posting
 * Make the release state and relevant evidence visible in one Slack thread
@@ -36,7 +106,7 @@ Goals
 * Create a repeatable release record that can be reviewed afterwards
 * Surface, before approval, any client PR in the release that has not been confirmed release-ready by its client team
 
-Non-goals
+### Non-goals
 
 * Automatically deciding whether a release is safe
 * Automatically deploying immediately after a readiness report
@@ -45,7 +115,7 @@ Non-goals
 * Replacing client-team ownership of their readiness decisions
 * Automatically matching people across Slack and GitHub identities
 
-Proposed workflow
+## Proposed workflow
 
 1. A team member posts the usual kickoff message, for example: :threadparrot: Planned Release v5.0.4
 2. Slack Workflow Builder starts the workflow from the release kickoff message and passes the release version and thread context to the backend service.
@@ -59,17 +129,17 @@ Proposed workflow
 
 All status and result messages remain in the release thread so that the process is visible to the team. The bot must clearly distinguish a successful check from an unavailable, incomplete, or explicitly overridden check.
 
-POC Scope (Building Now)
+## POC Scope (Building Now)
 
 Trigger: manual, private only — a DM to the bot or an equivalent private query. No public channel post, no workflow trigger tied to release kickoff messages yet.
-What it does, on demand, for the latest staging-vs-prod diff:
+What it does, on demand, for the latest staging-vs-prod diff (implemented today as `scripts/release_check_poc.py`, see above):
 
 1. Diff current latest version (staging) against production using the existing GitHub compare logic.
 2. For each commit/PR in that diff, check the PR title for a Jira ticket number — this is the required convention for all PRs.
     1. No ticket number found in the title → flag as needing manual review and notify the requester directly; do not attempt to guess or classify the PR further.
     2. Ticket number found → look up and show its Jira status as information only. Ticket status is not used to block anything in this POC, since ticket status has never been part of the team's actual release-gating process.
-3. Separately, for each PR found, search the support channel for a message containing that PR's link (matched by URL, not by person) and if found, surface the Slack thread so the requester can read the client conversation directly.
-4. Reply privately (DM) with the full list: every PR in the diff, its Jira ticket + status if present, a manual-review flag if no ticket number was found, and a link to the matching support-channel thread if one exists.
+3. The script does not call Slack itself — it has no Slack token or `search:read` scope. Instead it outputs a labeled "Step 2" hand-off list of PR links, matched by URL (not by person), for a human — or an assistant/orchestrator with its own Slack access — to check against the support channel afterward.
+4. Reply privately (DM) with the full list: every PR in the diff, its Jira ticket + status if present, a manual-review flag if no ticket number was found, plus the Step 2 hand-off list of PR links to check against the support channel.
 
 What this POC deliberately does not do:
 
@@ -78,18 +148,19 @@ What this POC deliberately does not do:
 * No public message anywhere — DM only.
 * No blocking verdict — it assembles evidence; the requester still decides.
 * No release-version state tracking between calls; each call is a fresh on-demand lookup against the current latest version.
+* No Slack API calls of any kind — support-channel matching is handed off as a separate step (see script docs above).
 
 This POC is a stepping stone toward the full Client PR Readiness Gate below, which remains the next planned build.
 
-Client PR Readiness Gate
+## Client PR Readiness Gate
 
 This addresses the "which version can actually be released" pain point directly.
 
-Problem in more detail
+### Problem in more detail
 
 Client PRs are raised in the support channel as review/merge tickets, tagged to a business unit or client team, with a GitHub PR link in the thread. Approval of the code (a reviewer says LGTM) and confirmation that it is safe to release are currently conflated — there is no structured signal for the second one. When a version is being prepared, someone has to manually search the support channel, find the relevant PR thread, and ask the client team directly whether it is safe to include, or whether the release should roll back that change. This is slow, easy to miss, and complicated by Slack-to-GitHub identity mismatches.
 
-Proposed POC
+### Proposed POC
 
 Since this signal does not exist today, build it as part of this POC rather than assuming client teams already provide it.
 
@@ -99,11 +170,11 @@ Since this signal does not exist today, build it as part of this POC rather than
 4. If a client team responds "hold" — either via the reaction or by replying directly in the ticket thread when asked — the readiness report must show this clearly as a blocking flag, not a soft warning. The release owner can still choose to override it explicitly with a stated reason (for example, if the client later confirms verbally that it is fine, or the PR is dropped from the version), but the override and its reason must be recorded the same way as a regression override, never silently treated as approval.
 5. Scope of the signal: a reaction means "ready whenever this ships next," not tied to one specific release version, to avoid ambiguity. A client team asking to hold a specific version specifically is treated as an explicit hold for that release only.
 
-Why build this now rather than defer it
+### Why build this now rather than defer it
 
 This gap matters as much as the Jenkins/Jira readiness work, since "which version can be released" is blocked on this today, not just made less convenient. Building a first version alongside the main POC — even a simple reaction-based signal plus a link-based match — replaces a fully manual, easy-to-miss lookup with a visible, recorded flag before approval.
 
-Human control and safety constraints
+### Human control and safety constraints
 
 * Only an explicitly designated release owner can approve the release.
 * Approval applies to one specific release version and thread.
@@ -113,7 +184,7 @@ Human control and safety constraints
 * The bot must not silently retry a failed check, silently treat an override as a pass, silently treat "no response yet" from a client team as approval, or create duplicate deployment actions.
 * Every action and result should be traceable to the release thread and its underlying source link.
 
-MVP scope
+## MVP scope
 
 The initial pilot should focus on the highest-value, lowest-risk steps:
 
@@ -126,8 +197,9 @@ The initial pilot should focus on the highest-value, lowest-risk steps:
 
 Health-endpoint verification and sanity-test monitoring can be added in the next phase after the basic workflow has been used successfully.
 
-Architecture
+## Architecture
 
+```
 Team member posts planned-release message
                     |
                     v
@@ -150,12 +222,13 @@ Team member posts planned-release message
                     |
                     v
              Slack release thread
+```
 
-The backend can be implemented as a small AWS Lambda service — a working proof-of-concept already exists (keyword-triggered webhook, version parsing, GitHub/Jira lookups, report formatting) and can be extended rather than built from scratch. It was sanity-checked against real release messages from the channel and works correctly, though it currently uses placeholder values for the GitHub repo and Jira instance, and should be pointed at the actual AIPL Jira project key before use. The client PR gate is new work on top of this and will need to read messages/reactions from the support channel in addition to GitHub, Jira, and Jenkins.
+The backend can be implemented as a small AWS Lambda service — a working proof-of-concept already exists (keyword-triggered webhook, version parsing, GitHub/Jira lookups, report formatting; see `scripts/release_check_poc.py` above) and can be extended rather than built from scratch. It was sanity-checked against real release messages from the channel and works correctly, though it currently uses placeholder values for the GitHub repo and Jira instance and should be pointed at the real ones before use. No separate Jira project-key config is needed — the project prefix is already embedded in each ticket key extracted from the PR title (e.g. `AIPL` in `AIPL-1234`), so multiple projects (currently `AIPL` and `RSAI`, prioritized in that order in the report) are supported automatically. The client PR gate is new work on top of this and will need to read messages/reactions from the support channel in addition to GitHub, Jira, and Jenkins.
 The backend needs to retain enough state to associate each event with one release version and Slack thread, and to associate each client PR ticket with its release-ready status independent of any specific release. Monitoring should resume safely after an individual request finishes rather than relying on one request remaining open until Jenkins or the sanity test completes. The exact mechanism — such as an existing scheduler, workflow engine, queue, or other durable job mechanism — should be confirmed during implementation. It must support retries without duplicate messages or actions.
 The integration should use the minimum access required for Jira, GitHub, Jenkins, AWS, and Slack. Credentials should remain in the approved secret store and should not be posted to Slack.
 
-Failure scenarios to handle
+## Failure scenarios to handle
 
 The pilot should define and test behavior for at least these cases:
 
@@ -176,7 +249,7 @@ The pilot should define and test behavior for at least these cases:
 
 In each case, the expected behavior is to report the known state, link to the source where possible, avoid taking an irreversible action, and hand the next decision back to the release owner.
 
-Success criteria for the pilot
+## Success criteria for the pilot
 
 Run the workflow alongside three real releases and compare it with the current process. The pilot is successful if it:
 
@@ -190,50 +263,24 @@ Run the workflow alongside three real releases and compare it with the current p
 
 Where practical, record the approximate time spent by the release owner before and during the pilot, along with issues discovered and any manual steps that remain necessary.
 
-Initial estimate
+## Initial estimate
 
 Existing readiness-report scripts and Lambda/webhook scaffolding can provide a starting point. The estimate below is for planning only and should be refined after confirming the available APIs and the durable monitoring mechanism.
 
-Piece
-	Work
-	Initial estimate
-
-Readiness report
-	Polish existing script, error handling, project keys, and links
-	2–4 hrs
-
-Slack workflow
-	Kickoff trigger, thread context, and message formatting
-	1–3 hrs
-
-Approval and release state
-	Designated approver, state transitions, override recording, duplicate protection
-	3–7 hrs
-
-Client PR readiness gate
-	Ticket-creation prompt, reaction capture, PR-link matching against release diff, hold handling
-	6–10 hrs
-
-Jenkins integration
-	Post release-pipeline job link and report status changes
-	3–6 hrs
-
-Final summary
-	Compile release evidence and outcome, including PR gate status
-	1–2 hrs
-
-Pilot testing
-	Run alongside a real release and fix edge cases
-	3–6 hrs
-
-MVP total
-	
-	~19–38 hrs
-
+| Piece | Work | Initial estimate |
+|---|---|---|
+| Readiness report | Polish existing script, error handling, project keys, and links | 2–4 hrs |
+| Slack workflow | Kickoff trigger, thread context, and message formatting | 1–3 hrs |
+| Approval and release state | Designated approver, state transitions, override recording, duplicate protection | 3–7 hrs |
+| Client PR readiness gate | Ticket-creation prompt, reaction capture, PR-link matching against release diff, hold handling | 6–10 hrs |
+| Jenkins integration | Post release-pipeline job link and report status changes | 3–6 hrs |
+| Final summary | Compile release evidence and outcome, including PR gate status | 1–2 hrs |
+| Pilot testing | Run alongside a real release and fix edge cases | 3–6 hrs |
+| **MVP total** | | **~19–38 hrs** |
 
 Health checks and sanity-test monitoring should be estimated separately after the MVP exposes the actual API, timing, and failure-handling requirements.
 
-Open decisions
+## Open decisions
 
 * What is the designated release-owner approval action?
 * Which users or role are authorized to approve a release?
@@ -247,6 +294,6 @@ Open decisions
 * If a client PR has no response at all by release time, should that block approval by default, or only show as an open flag the owner can override?
 * After the pilot, should health checks and sanity-test monitoring be added to the same workflow?
 
-Recommendation
+## Recommendation
 
 Build the MVP — including a first version of the client PR readiness gate — as a low-risk assistant to the existing release process, run it in parallel with three releases, and use the results to decide which additional steps are safe and valuable to automate. This should reduce late release work and close the "which version can be released" gap, without changing accountability or weakening the team's release controls.
