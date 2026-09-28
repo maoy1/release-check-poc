@@ -26,6 +26,21 @@ Environment variables are loaded automatically from `.env` (via `python-dotenv`)
 | `JIRA_BASE` | yes | e.g. `https://elsevier.atlassian.net` |
 | `SUPPORT_CHANNEL` | no | Slack channel ID, e.g. `C0A2N9D1G3B` — informational label only, no Slack call is made |
 
+#### Creating the `GITHUB_TOKEN`
+
+The script only ever reads commits/PRs (`get_diff_prs`, `lookup_pr_for_commit`), so a fine-grained PAT with read-only access is enough:
+
+1. GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → **Generate new token**.
+2. Repository access → **Only select repositories** → pick the repo `GITHUB_REPO` points at (e.g. `elsevier-research/kd-shared-genai-service`). Only select multiple repos here if you plan to run the script against more than one of them.
+3. Under Repository permissions, set:
+   - **Contents** → Read-only (needed for the compare/diff API)
+   - **Pull requests** → Read-only (needed to resolve a commit to its merged PR)
+   - **Metadata** → Read-only (auto-required, can't be changed)
+   Leave every other permission as "No access."
+4. Generate the token and paste it into `.env` as `GITHUB_TOKEN`.
+
+(Classic PAT alternative: the single `repo` scope covers the same access, but it's broader than needed.)
+
 ### Usage
 
 ```
