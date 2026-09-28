@@ -88,6 +88,9 @@ import re
 import sys
 import base64
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GITHUB_REPO = os.environ.get("GITHUB_REPO")
