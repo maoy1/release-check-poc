@@ -218,6 +218,23 @@ def get_jira_status(ticket_key: str) -> dict:
         return {"error": f"lookup failed ({e})"}
 
 
+TICKET_PREFIX_ORDER = ["AIPL", "RSAI"]
+
+
+def pr_sort_key(pr: dict) -> tuple[int, int, str]:
+    """Order: AIPL tickets, RSAI tickets, no ticket, then everything else;
+    within a group, by Jira status (failed lookups last)."""
+    ticket = pr["ticket"]
+    if not ticket:
+        group = len(TICKET_PREFIX_ORDER)
+    else:
+        prefix = ticket.split("-")[0]
+        group = (TICKET_PREFIX_ORDER.index(prefix) if prefix in TICKET_PREFIX_ORDER
+                 else len(TICKET_PREFIX_ORDER) + 1)
+    status = (pr["jira_info"] or {}).get("status")
+    return (group, 0 if status else 1, (status or "").lower())
+
+
 def collect_support_check_list(prs: list[dict]) -> list[dict]:
     """Build the hand-off list of PR links for step 2 (support-channel
     check). This script makes NO Slack API calls - it just packages the
@@ -240,6 +257,10 @@ def build_release_check_report(old_version: str, new_version: str) -> str:
     of PR links at the end, for step 2 to check separately.
     """
     prs = get_diff_prs(old_version, new_version)
+    for pr in prs:
+        pr["ticket"] = extract_ticket_from_title(pr["title"])
+        pr["jira_info"] = get_jira_status(pr["ticket"]) if pr["ticket"] else None
+    prs.sort(key=pr_sort_key)
 
     lines = []
     lines.append(f"*Client PR Readiness Check* \u2014 `{old_version}` \u2192 `{new_version}`")
@@ -249,12 +270,12 @@ def build_release_check_report(old_version: str, new_version: str) -> str:
         lines.append(f"\u2022 *{pr['title']}*")
         lines.append(f"   Link: <{pr['url']}>")
 
-        ticket = extract_ticket_from_title(pr["title"])
+        ticket = pr["ticket"]
         if not ticket:
             pr["jira"] = "no Jira ticket"
             lines.append("   :warning: No Jira ticket found in title \u2014 *manual review needed*")
         else:
-            jira_info = get_jira_status(ticket)
+            jira_info = pr["jira_info"]
             if "error" in jira_info:
                 pr["jira"] = f"{ticket}: {jira_info['error']}"
                 lines.append(f"   Jira: {ticket} \u2014 {jira_info['error']}")
